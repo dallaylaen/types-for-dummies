@@ -346,15 +346,227 @@ And therefore, since we know how `Unit->T` looks
     f = match(return t1, return t2)
 
 And this is exactly how *all* functions from `Boolean->T` look!
+You may think of this as C's ternary operator: `condition ? value1 : value2;`
 
 # Enumerable (finite) types
 
 Just like above, we can define a type with any number of predefined values.
 We can also give them names for readability.
 
+And similarly to boolean, a function with enumerable argument
+is going to look like
 
+    f: "x1"+"x2"+...+"xn"->T
+    ---------------
+    t1: T
+    t2: T
+    ...
+    tn: T
+    f == match(return t1, match( return t2, match( ..., return tn )...))
 
+Or it may be viewed as an array of values, a finite list of pairs,
+a hash table, etc.
 
+Such table may also be represented as a tuple:
 
+    T,Z type
+    f: Unit+T->Z
+    ---------------
+    t: Z*(T->Z)
+    f == match(return t.fst, t.snd)
 
+Note that `return` keyword here serves to convert concrete value (`t.fst`)
+into a function (`Unit->Z`),
+while `t.snd` is already a function by itself and we do *not* intend
+to return it as a value.
 
+Similarly, a tuple may be reduced to a sum of types:
+
+    T,Z type
+    ---------------
+    (Unit+T)*Z == Z+T*Z
+
+Looks similar to how normal product is defined.
+
+This may lead us to an idea that a function from and to finite types is
+itself a finite type. And this is right! But our theory is not strong enough
+for a formal proof yet.
+
+Indeed, only arbitrarily large but finite types and values may be constructed
+from Unit using the `+`, `*`, and `->` operators.
+
+<exercise>Starting at Boolean, construct a type that would be enough
+to enumerate all protons in the known universe.</exercise>
+
+# Natural numbers?
+
+The sad truth is that finite types only allow us to express the facts
+we already know.
+To break free, we'll need to modify the theory itself.
+
+Let's look closely at the `Unit+T` type mentioned above. As you can see, 
+it boils down to 1+1+1+...+1. Can we get rid of the last "1" and just leave
+the dots there?
+
+Well, we can (informally):
+
+    ()
+    --------------
+    Nat type
+    Nat == "0" + Nat
+
+Huh? Well, a natural number is indeed either a starting value (typically 1
+but starting at 0 is also possible), or a successor of another natural number.
+
+Let's try to restate that using inr() and inl(), just as we did for union:
+
+    ()
+    -------------
+    Nat type
+    inl("0"): Nat
+    inr(n: Nat): Nat
+
+The *new* thing here is that Nat may depend on itself and not *another* type.
+
+A function can now be expressed (just as with `A+B->T`) as a match:
+
+    f: Nat->T
+    -------------
+    t0: T
+    repeat: Nat->T
+    f == match( return t0, repeat )
+
+Note that the argument to repeat(T) will always be the *previous* value.
+Still a function of natural argument depends on another function of natural
+argument.
+On the other hand, we may still be sure that a calculation ends, provided that
+the chain of extractions reaches "0" at some point.
+
+# Recursive types
+
+Type T is a recursive type if and only if it can be represented as a union
+of named constructors depending on other types, including T, *unless*
+T (or anything depending on T) is on the left side of an arrow.
+
+A function of a recursive type is defined as a match of its constructors.
+For readability, we'll replace positional match with a named one:
+
+    A,B,C,Z type
+    T type (recursive)
+    a(A): T
+    b(B): T
+    c(C): T
+    fa: A->Z
+    fb: B->Z
+    fc: C->Z
+    ---------------
+    match( a => f1, b => f2, c => f3 ) == match( f1, match( f2, f3 ))
+
+Unions, pairs, and all enumerable types are recursive types by this definition.
+Unit is not recursive (it has a special condition regarding its values).
+Arrows are not recursive (we don't know at all how to construct them
+at this point).
+
+Now we can formally define Nat:
+
+    ()
+    ---------------
+    Nat type (recursive)
+    "0": Nat
+    succ(n: Nat): Nat
+
+Now to work with these numbers we must specify how we treat 0's and how
+we treat a number's successor:
+
+    f: Nat->T
+    --------------
+    t0: T
+    repeat: Nat->T
+    f == match( "0" => return t0; succ(n) => repeat(n) )
+
+And of course `repeat` may itself contain `f`, leading to (tadam) recursion.
+
+However, such definition may lead to *infinite* recursion which is not
+what we want yet. And this happens because of `Nat` on the left side
+of an arrow.
+
+    f: Nat->Context
+    -------------
+    t0: Context
+    repeat: Context->Context
+    f == match( "0" => return t0; succ(n) => return repeat(f(n)) )
+
+Such `f` will halt, provided that `repeat` has no references to `f` and 
+`Context` is itself recursive.
+
+We call the resulting type `Context` because it may enclose temporary variables
+as well as the desired value. If we need a value of type T, we may assume
+Context to be `T*Vars` and thus
+
+    f: Nat->T
+    --------------
+    f': Nat->T*Vars
+    f(n) = f'(n).fst
+
+<exercise>Implement n! (the product of all naturals from 1 to n).</exercise>
+
+# Lists
+
+# lamdba terms
+
+# Combinators
+
+What if we allow a recursive type on the left side of an arrow?
+
+Here's an example.
+
+    ()
+    --------------
+    T type (recursive)
+    fun(T->T): T
+
+T has only one constructor, therefore functions on it may only be defined as
+a match with one branch:
+
+    T type (...)
+    --------------
+    i: T->T
+    i(fun(t)) := fun(t)
+    k: T->T
+    k(fun(t))(fun(unused)) := fun(t)
+    s: T->T
+    s(fun(f))(fun(g))(fun(arg)) := fun(f(arg)(g(arg)))
+
+This structure is known as combinatory logic.
+It's known to be Turing complete, and thus may include functions that
+never return.
+
+# Peano Arithmetic
+
+How potent are recursive types with the limitation?
+It may be shown that `Nat` with `+`, `*`, and `->` is as powerful as
+Peano arithmetic and so is allowing *all* recursive types.
+
+And this is what constitutes simply typed lambda calculus.
+
+# Universes
+
+We can create natural numbers. What about even numbers or prime numbers?
+These can be addressed, too, but a lot of work is needed to do so.
+
+Let's first create a Universe (BANG!).
+
+In ordinary set theory (both naive and ZF) sets may belong to larger sets.
+The types, however, do not belong to other types.
+
+We've seen types parametrized with other types.
+What about types parametrized with values?
+Here we go:
+
+    ()
+    -------------
+    U type
+    u: U
+    Dec(u) type
+
+Ouch. 
