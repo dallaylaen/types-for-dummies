@@ -28,12 +28,24 @@ object u { /* Universe */
 }
 
 class Type (name: String) {
+    var arrows: HashMap[Type,FunType] = new HashMap()
+    var n = 0
+    def nextId(): Int = { n = n + 1; return n }
+
+    u.register(name, this)
+
     def free(): FreeVar = {
         return new FreeVar(this)
     }
     def name(): String = { name }
     def from(arg: Type): FunType = {
-        new FunType(this, arg)
+        if (arrows.contains(arg)) {
+            return arrows{arg}
+        } else {
+            var fun = new FunType(this, arg)
+            arrows = arrows + (arg->fun)
+            return fun
+        }
     }
     def ret(): Type = {
         u.die ("ret called on non-function Type")
@@ -78,13 +90,24 @@ class Context(vars: HashMap[FreeVar, Expr] = HashMap()) {
         }
         return vars{free}
     }
+    def str(value: Expr): String = {
+        value match {
+            case v: FreeVar => if (vars.contains(v)) {
+                    vars{v}.toString
+                } else {
+                    v.toString
+                };
+            case any => any.toString
+        }
+    }
 }
 
 class FreeVar(isa: Type) extends Expr (isa) {
+    var n = isa.nextId
     override def eval(ctx: Context): Expr = {
         return ctx.getValue(this)
     }
-    override def toString(): String = { ""+isa+"<?>" }
+    override def toString(): String = { ""+isa+"["+n+"]" }
 }
 
 class FunType(ret: Type, arg: Type) extends Type(ret.name+"("+arg.name+")") {
@@ -172,8 +195,19 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
     }
 }
 
+class LambdaExpr(ret: Type, arg: FreeVar, impl: Expr) 
+        extends Expr(ret.from(arg.isa))
+{
+    impl.isa == ret || u.die("Lambda: cannot return "+ret+" from expr "+impl)
+
+    override def toString(): String = {
+        return "lambda("+arg+"){"+impl+"}"
+    }
+}
+
 class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
     override def eval(ctx: Context): Expr = {
+        println("\t...apply "+fun+" to "+ctx.str(arg))
         fun.eval(ctx).exec(ctx, arg.eval(ctx)).eval(ctx)
     }
     override def toString(): String = {
