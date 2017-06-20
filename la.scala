@@ -3,6 +3,9 @@ package stlc.la;
 import scala.collection.immutable.HashMap;
 
 class Error(s: String) extends Exception(s) {
+    override def toString(): String = {
+        return super.toString + " at line " + getStackTrace()(1).getLineNumber + " at line " + getStackTrace()(2).getLineNumber + " at line " + getStackTrace()(3).getLineNumber
+    }
 }
 
 object u { /* Universe */
@@ -77,16 +80,23 @@ class Expr(isa: Type) {
     }
     def apply(arg: Expr): Expr = {
         isa match {
-            case isa: FunType => new ApplyExpr(this, arg);
+            case isa: FunType => new ApplyExpr(this, arg).check(isa.ret);
             case _ => u.die("apply called on non-function value "+this+" of "+isa);
         }
     }
     def exec(ctx: Context, arg: Expr): Expr = {
         isa match {
-            case x: FunType => new ApplyExpr(this, arg)
+            case isa: FunType => new ApplyExpr(this.eval(ctx), arg.eval(ctx)).check(isa.ret)
             case _          => u.die("exec called on non-function value "+this+" of "+isa)
         }
     }
+    def check(t: Type): Expr = {
+        if (isa != t) {
+            u.die("Type mismatch: expected a " +t+
+                "; got value " + this + " of type "+isa)
+        }
+        this
+    };
     override def toString(): String = { ""+isa+"<...>" }
 }
 
@@ -155,8 +165,11 @@ class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
 class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
     override def eval(ctx: Context): Expr = {
         println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
-        var ret = fun.eval(ctx).exec(ctx, arg.eval(ctx)).eval(ctx)
-        println("\t[apl] <-- got "+ret+"; context="+ctx)
+        var ret = arg.eval(ctx) match {
+            case xx: FreeVar => new MultiargExpr(List(xx), fun.eval(ctx))
+            case xx: Expr    => fun.eval(ctx).exec(ctx, xx).eval(ctx)
+        }
+        println("\t[apl] <-- got "+ret.check(fun.isa.ret)+"; context="+ctx)
         return ret
     }
     override def toString(): String = {
@@ -170,23 +183,28 @@ class Lambda(arg: FreeVar, impl: Expr)
     var name = "lambda"
     def rename(s: String): Lambda = { name = s; this }
     override def eval(ctx: Context) = { 
-        this // new Lambda( arg, impl.eval(ctx) )
+        new Lambda( arg, impl.eval(ctx) )
     }
     override def toString(): String = {
         return name + "("+arg+"){"+impl+"}"
     }
-    override def exec(ctx0: Context, x: Expr): Expr = {
-        println( "\t[lmb] --> exec "+this+" ("+x+"); context="+ctx0 );
-        var ctx = ctx0.bind(arg, x.eval(ctx0))
-        var ret = impl.eval(ctx)
-        println( "\t[lmb] <-- got "+ret+"; context="+ctx );
+    override def exec(ctx: Context, x: Expr): Expr = {
+        println( "\t[lmb] --> exec "+this+" ("+x+"); context="+ctx );
+        var ret = x.eval(ctx) match {
+            case xx: FreeVar => new MultiargExpr (List(xx), impl)
+            case xx: Expr    => impl.eval(ctx.bind(arg, xx))
+        }
+        println( "\t[lmb] <-- got "+ret.check(impl.isa) );
         ret
     }
 }
 
 class MultiargExpr(input: List[FreeVar], impl: Expr) extends Expr(impl.isa) {
     override def eval(ctx: Context): Expr = {
-        impl.eval(ctx)
+        println( "\t[uax] --> eval "+this+"; context="+ctx );
+        var ret = impl.eval(ctx)
+        println( "\t[uax] <-- got "+ret );
+        ret
     }
     def getArgs(): List[FreeVar] = { input }
 }
@@ -261,16 +279,16 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
     override def eval(ctx: Context) = { this }
     override def exec(ctx: Context, arg: Expr): Expr = {
         println("\t[par] --> exec "+this+" on "+arg+"; context="+ctx )
-        arg match {
+        var ret = arg match {
             case arg: PartialExpr => {
                 var impl = getImpl(arg.id)
                 println("\t[par] found impl "+impl )
-                var ret = impl.eval(ctx.bind(impl.getArgs, arg.getArgs))
-                println("\t[par] <-- got "+ret+"; context="+ctx )
-                ret
+                impl.eval(ctx.bind(impl.getArgs, arg.getArgs))
             }
             case any => u.die("Cannot exec "+this+" on value "+any)
         }
+        println("\t[par] <-- got "+ret.check(isa.ret)+"; context="+ctx )
+        ret
     }
     def getImpl(id: String): MultiargExpr = {
         if (!cons.contains(id)) {
@@ -370,7 +388,7 @@ object Smoke {
         var y = nat.free
         x = nat.free
         add.con("succ", List(x), new Lambda(y, next.apply(add.apply(x).apply(y))))
-        play (add.apply(one).apply(three))
+        play (add.apply(one).apply(one))
 
 
         x = nat.free
