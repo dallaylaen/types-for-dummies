@@ -159,11 +159,13 @@ class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
 class Lambda(arg: FreeVar, impl: Expr) 
         extends Expr(impl.isa.from(arg.isa))
 {
+    var name = "lambda"
+    def rename(s: String): Lambda = { name = s; this }
     override def eval(ctx: Context) = { 
         this // new Lambda( arg, impl.eval(ctx) )
     }
     override def toString(): String = {
-        return "lambda("+arg+"){"+impl+"}"
+        return name + "("+arg+"){"+impl+"}"
     }
     override def exec(ctx0: Context, x: Expr): Expr = {
         println( "\t[lmb] --> exec "+this+" ("+x+"); context="+ctx0 );
@@ -182,7 +184,7 @@ class MultiargExpr(input: List[FreeVar], impl: Expr) extends Expr(impl.isa) {
 }
 
 /* Partial types (aka recursive) and partial functions */
-
+/* This is actual STLC =) */
 class PartialType( name: String) extends Type(name) {
     var cons: HashMap[String,List[Type]] = new HashMap()
     def con(id: String, arg: List[Type] = List()) = {
@@ -292,6 +294,7 @@ object Smoke {
     }
 
     def main(arg: Array[String]) = {
+        println (" --- partial types" ); 
         var bool = new PartialType("Bool").con("true").con("false")
 
         var nat  = new PartialType("Nat").con("0")
@@ -330,9 +333,9 @@ object Smoke {
 
 
         x = nat.free
-        var k = new Lambda(x, new Lambda(nat.free, x))
+        var k_int = new Lambda(x, new Lambda(nat.free, x))
 
-        play( k.apply(three)(one) )
+        play( k_int.apply(three)(one) )
 
         println( " ---- Addition " );
         
