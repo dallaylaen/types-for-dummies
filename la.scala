@@ -82,7 +82,10 @@ class Expr(isa: Type) {
         }
     }
     def exec(ctx: Context, arg: Expr): Expr = {
-        u.die("exec called on non-function value "+this+" of "+isa)
+        isa match {
+            case x: FunType => new ApplyExpr(this, arg)
+            case _          => u.die("exec called on non-function value "+this+" of "+isa)
+        }
     }
     override def toString(): String = { ""+isa+"<...>" }
 }
@@ -93,6 +96,11 @@ class FreeVar(isa: Type) extends Expr (isa) {
         return ctx.getValue(this)
     }
     override def toString(): String = { ""+isa+"["+n+"]" }
+    def setTo (t: Expr): Pair[FreeVar,Expr] = {
+        if (t.isa != isa)
+            u.die("Attempt to set "+this+" to "+t+" or type "+t.isa)
+        return (this->t)   
+    }
 }
 
 /* Context class - representing bound free variables */
@@ -114,7 +122,7 @@ class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
         var ifree = free.iterator
         var ito = to.iterator
         while (ifree.hasNext && ito.hasNext) {
-            next = new Context(next.vars + (ifree.next->ito.next), id)
+            next = new Context(next.vars + ifree.next.setTo(ito.next), id)
         }
         if (ifree.hasNext || ito.hasNext) {
             u.die("Cannot bind lists with different length")
@@ -122,10 +130,10 @@ class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
         return next
     }
     def getValue(free: FreeVar): Expr = {
-        if (!vars.contains(free)) {
-            return free
+        if (vars.contains(free)) {
+            return vars{free}
         }
-        return vars{free}
+        return free
     }
     def str(value: Expr): String = {
         value match {
@@ -294,18 +302,37 @@ object Smoke {
     }
 
     def main(arg: Array[String]) = {
-        println (" --- partial types" ); 
+        println (" --- finite types" ); 
         var bool = new PartialType("Bool").con("true").con("false")
+
+        var tt = bool.spawn("true")
+        var ff = bool.spawn("false")
+
+        var not = new PartialFun("not", bool.from(bool))
+            .con("true", ff)
+            .con("false", tt)
+
+        play( not.apply(tt) )
+
+        var nand = new PartialFun("nand", bool.from(bool).from(bool));
+        nand.con("true", new Lambda(bool.free, ff))
+        nand.con("false", not);
+
+        play (nand.apply(ff).apply(ff))
+
+        var switch = bool.free
+        var notx = new Lambda(switch, nand.apply(switch).apply(tt));
+
+        play (notx.apply(tt))
+        play (notx.apply(ff))
+
+        println (" --- nat (recursive)" )
 
         var nat  = new PartialType("Nat").con("0")
         nat.con("succ", List(nat))
 
-        var not = new PartialFun("not", bool.from(bool))
-            .con("true", bool.spawn("false"))
-            .con("false", bool.spawn("true"))
-
         var even = new PartialFun("even", bool.from(nat))
-            .con("0", bool.spawn("true"))
+            .con("0", tt)
 
         var x = nat.free
         even.con("succ", List(x), not.apply(even.apply(x)))
@@ -315,9 +342,6 @@ object Smoke {
         var two = nat.spawn("succ", one)
         var three = nat.spawn("succ", two)
 
-        var f1 = not.apply(bool.spawn("true"))
-
-        play(f1);
         play(even.apply(nat.spawn("0")))
         play(even.apply(three))
 
@@ -348,6 +372,13 @@ object Smoke {
         add.con("succ", List(x), new Lambda(y, next.apply(add.apply(x).apply(y))))
         play (add.apply(one).apply(three))
 
+
+        x = nat.free
+        var same = new Lambda(x, add.apply(x).apply(zero)).rename("add0")
+
+        play( same.apply(zero) )
+
+/*
         x = nat.free
         var double = new Lambda( x, add.apply(x).apply(x) )
 
@@ -355,6 +386,7 @@ object Smoke {
 
         play( double.apply(two) );
 
+*/
 /*
         var mul = new PartialFun("mul", nat.from(nat).from(nat))
         mul.con("0", new Lambda(nat.free, nat.spawn("0")))
@@ -368,7 +400,7 @@ object Smoke {
 
         if (fail.length > 0) {
             println( "Failed: \n"+fail.mkString("\n") )
-            exit(1)
+            sys.exit(1)
         }
     } /* end main */
 
