@@ -27,6 +27,8 @@ object u { /* Universe */
     }
 }
 
+/* Generic types */
+
 class Type (name: String) {
     var arrows: HashMap[Type,FunType] = new HashMap()
     var n = 0
@@ -56,6 +58,13 @@ class Type (name: String) {
     override def toString(): String = { name }
 }
 
+class FunType(ret: Type, arg: Type) extends Type(ret.name+"("+arg.name+")") {
+    override def ret(): Type = { ret }
+    override def arg(): Type = { arg }
+}
+
+/* Generic expressions */
+
 class Expr(isa: Type) {
     def isa(): Type = { isa }
     def eval(): Expr = {
@@ -72,22 +81,20 @@ class Expr(isa: Type) {
         }
     }
     def exec(ctx: Context, arg: Expr): Expr = {
-        u.die("apply called on non-function value "+this+" of "+isa)
+        u.die("exec called on non-function value "+this+" of "+isa)
     }
     override def toString(): String = { ""+isa+"<...>" }
 }
 
-class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
+class FreeVar(isa: Type) extends Expr (isa) {
+    var n = isa.nextId
     override def eval(ctx: Context): Expr = {
-        println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
-        var ret = fun.eval(ctx).exec(ctx, arg.eval(ctx)).eval(ctx)
-        println("\t[apl] <-- got "+ret+"; context="+ctx)
-        return ret
+        return ctx.getValue(this)
     }
-    override def toString(): String = {
-        "" + fun + "(" + arg + ")" 
-    }
+    override def toString(): String = { ""+isa+"["+n+"]" }
 }
+
+/* Context class - representing bound free variables */
 
 object ContextId {
     var id = 0
@@ -133,17 +140,36 @@ class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
     }
 }
 
-class FreeVar(isa: Type) extends Expr (isa) {
-    var n = isa.nextId
+/* Applications and lambdas */
+
+class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
     override def eval(ctx: Context): Expr = {
-        return ctx.getValue(this)
+        println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
+        var ret = fun.eval(ctx).exec(ctx, arg.eval(ctx)).eval(ctx)
+        println("\t[apl] <-- got "+ret+"; context="+ctx)
+        return ret
     }
-    override def toString(): String = { ""+isa+"["+n+"]" }
+    override def toString(): String = {
+        "" + fun + "(" + arg + ")" 
+    }
 }
 
-class FunType(ret: Type, arg: Type) extends Type(ret.name+"("+arg.name+")") {
-    override def ret(): Type = { ret }
-    override def arg(): Type = { arg }
+class Lambda(arg: FreeVar, impl: Expr) 
+        extends Expr(impl.isa.from(arg.isa))
+{
+    override def eval(ctx: Context) = { 
+        this // new Lambda( arg, impl.eval(ctx) )
+    }
+    override def toString(): String = {
+        return "lambda("+arg+"){"+impl+"}"
+    }
+    override def exec(ctx0: Context, x: Expr): Expr = {
+        println( "\t[lmb] --> exec "+this+" ("+x+"); context="+ctx0 );
+        var ctx = ctx0.bind(arg, x.eval(ctx0))
+        var ret = impl.eval(ctx)
+        println( "\t[lmb] <-- got "+ret+"; context="+ctx );
+        ret
+    }
 }
 
 class MultiargExpr(input: List[FreeVar], impl: Expr) extends Expr(impl.isa) {
@@ -153,7 +179,7 @@ class MultiargExpr(input: List[FreeVar], impl: Expr) extends Expr(impl.isa) {
     def getArgs(): List[FreeVar] = { input }
 }
 
-/* ============= */
+/* Partial types (aka recursive) and partial functions */
 
 class PartialType( name: String) extends Type(name) {
     var cons: HashMap[String,List[Type]] = new HashMap()
@@ -217,15 +243,16 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
     }
     override def eval(ctx: Context) = { this }
     override def exec(ctx: Context, arg: Expr): Expr = {
+        println("\t[par] --> exec "+this+" on "+arg+"; context="+ctx )
         arg match {
             case arg: PartialExpr => {
                 var impl = getImpl(arg.id)
-                println("\t[par] --> apply "+impl+" to "+arg+"; context="+ctx )
+                println("\t[par] found impl "+impl )
                 var ret = impl.eval(ctx.bind(impl.getArgs, arg.getArgs))
                 println("\t[par] <-- got "+ret+"; context="+ctx )
                 ret
             }
-            case any => u.die("Cannot apply "+this+" to value "+any)
+            case any => u.die("Cannot exec "+this+" on value "+any)
         }
     }
     def getImpl(id: String): MultiargExpr = {
@@ -238,25 +265,9 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
 
 }
 
-class Lambda(arg: FreeVar, impl: Expr) 
-        extends Expr(impl.isa.from(arg.isa))
-{
-    override def eval(ctx: Context) = { 
-        new Lambda( arg, impl.eval(ctx) )
-    }
-    override def toString(): String = {
-        return "lambda("+arg+"){"+impl+"}"
-    }
-    override def exec(ctx: Context, x: Expr): Expr = {
-        println( "\t[lmb] --> exec "+this+" ("+x+"); context="+ctx );
-        var ret = impl.eval(ctx.bind(arg, x.eval(ctx)))
-        println( "\t[lmb] <-- got "+ret+"; context="+ctx );
-        ret
-    }
-}
-
 object Smoke {
     var n = 0
+    var fail: List[Int] = List()
     def play(expr: Expr) {
         n = n + 1
         println( " === CASE "+n )
@@ -266,6 +277,7 @@ object Smoke {
             println( "    "+expr.eval() )
         } catch {
             case e: Any => println( " *** DIED: "+e )
+            fail = fail :+ n
         }
         println( " === END CASE "+n )
     }
@@ -324,6 +336,28 @@ object Smoke {
         add.con("succ", List(x), new Lambda(y, next.apply(add.apply(x).apply(y))))
         play (add.apply(one).apply(three))
 
-    }
+        x = nat.free
+        var double = new Lambda( x, add.apply(x).apply(x) )
+
+        play( double.apply(zero) );
+
+        play( double.apply(two) );
+
+/*
+        var mul = new PartialFun("mul", nat.from(nat).from(nat))
+        mul.con("0", new Lambda(nat.free, nat.spawn("0")))
+
+        x = nat.free
+        y = nat.free
+        mul.con("succ", List(x), new Lambda(y, add.apply(y).apply(mul.apply(x).apply(y))))
+
+        play(mul.apply(three).apply(two))
+*/
+
+        if (fail.length > 0) {
+            println( "Failed: "+fail.mkString(", ") )
+            exit(1)
+        }
+    } /* end main */
 
 }
