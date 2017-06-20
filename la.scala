@@ -58,22 +58,50 @@ class Type (name: String) {
 
 class Expr(isa: Type) {
     def isa(): Type = { isa }
-    def eval(ctx: Context = new Context()): Expr = { this }
+    def eval(): Expr = {
+        eval(new Context(new HashMap()))
+    }
+    def eval(ctx: Context): Expr = {
+        u.die ("no eval impl for "+this+" in "+this.getClass);
+        this 
+    }
     def apply(arg: Expr): Expr = {
-        u.die("apply called on non-function value")
+        isa match {
+            case isa: FunType => new ApplyExpr(this, arg);
+            case _ => u.die("apply called on non-function value "+this+" of "+isa);
+        }
     }
     def exec(ctx: Context, arg: Expr): Expr = {
-        u.die("apply called on non-function value")
+        u.die("apply called on non-function value "+this+" of "+isa)
     }
     override def toString(): String = { ""+isa+"<...>" }
 }
 
-class Context(vars: HashMap[FreeVar, Expr] = HashMap()) {
+class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
+    override def eval(ctx: Context): Expr = {
+        println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
+        var ret = fun.eval(ctx).exec(ctx, arg.eval(ctx)).eval(ctx)
+        println("\t[apl] <-- got "+ret+"; context="+ctx)
+        return ret
+    }
+    override def toString(): String = {
+        "" + fun + "(" + arg + ")" 
+    }
+}
+
+object ContextId {
+    var id = 0
+    def next(): Int = { id = id + 1; return id }
+}
+
+class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
+    var id = ContextId.next
+    println( "\t[ctx] "+this )
     def bind(free: FreeVar, to: Expr): Context = {
         if (free.isa != to.isa) {
             u.die("Cannot bind var of type "+free.isa+" to value "+to)
         }
-        return new Context( vars + (free->to) )
+        return new Context( vars + (free->to), id )
     }
     def bind(free: List[FreeVar], to: List[Expr]): Context = {
         if (free.length != to.length) {
@@ -86,7 +114,7 @@ class Context(vars: HashMap[FreeVar, Expr] = HashMap()) {
     }
     def getValue(free: FreeVar): Expr = {
         if (!vars.contains(free)) {
-            u.die("Cannot find value in context")
+            return free
         }
         return vars{free}
     }
@@ -99,6 +127,9 @@ class Context(vars: HashMap[FreeVar, Expr] = HashMap()) {
                 };
             case any => any.toString
         }
+    }
+    override def toString(): String = {
+        "ctx["+id+"/"+parent+"]{"+vars.keys.toList.map( x => x+"="+vars{x} ).mkString(",")+"}"
     }
 }
 
@@ -136,8 +167,14 @@ class PartialType( name: String) extends Type(name) {
         }
         return cons{id}
     }
-    def spawn(id: String, arg: List[Expr] = List()): PartialExpr = {
+    def spawn(id: String, arg: List[Expr]): PartialExpr = {
         new PartialExpr(this, id, arg)
+    }
+    def spawn(id: String, arg: Expr): PartialExpr = {
+        new PartialExpr(this, id, List(arg))
+    }
+    def spawn(id: String): PartialExpr = {
+        new PartialExpr(this, id, List())
     }
 }
 
@@ -146,6 +183,9 @@ class PartialExpr(isa: PartialType, id: String, arg: List[Expr]=List())
     u.check(arg, isa.getArgs(id))
     def getArgs(): List[Expr] = { arg }
     def id(): String = { id }
+    override def eval(ctx: Context): Expr = {
+        new PartialExpr(isa, id, arg.map(x => x.eval(ctx)))
+    }
     override def toString(): String = {
         if (arg.length > 0) {
             return ""+isa+"."+id+"<"+arg.mkString(",")+">"
@@ -169,11 +209,15 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
         cons = cons + (id->new MultiargExpr(free,impl))
         this
     }
+    override def eval(ctx: Context) = { this }
     override def exec(ctx: Context, arg: Expr): Expr = {
         arg match {
             case arg: PartialExpr => {
                 var impl = getImpl(arg.id)
-                impl.eval(ctx.bind(impl.getArgs, arg.getArgs))
+                println("\t[par] --> apply "+impl+" to "+arg+"; context="+ctx )
+                var ret = impl.eval(ctx.bind(impl.getArgs, arg.getArgs))
+                println("\t[par] <-- got "+ret+"; context="+ctx )
+                ret
             }
             case any => u.die("Cannot apply "+this+" to value "+any)
         }
@@ -186,36 +230,40 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
     }
     override def toString(): String = { name+"["+isa+"]" }
 
-    /* TODO this should go to generic FunExpr */
-    override def apply(arg: Expr): Expr = {
-        if (argtype != arg.isa) {
-            u.die("Cannot apply "+this+" to value "+arg)
-        }
-        return new ApplyExpr(this, arg)
-    }
 }
 
-class LambdaExpr(ret: Type, arg: FreeVar, impl: Expr) 
-        extends Expr(ret.from(arg.isa))
+class Lambda(arg: FreeVar, impl: Expr) 
+        extends Expr(impl.isa.from(arg.isa))
 {
-    impl.isa == ret || u.die("Lambda: cannot return "+ret+" from expr "+impl)
-
+    override def eval(ctx: Context) = { 
+        new Lambda( arg, impl.eval(ctx) )
+    }
     override def toString(): String = {
         return "lambda("+arg+"){"+impl+"}"
     }
-}
-
-class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
-    override def eval(ctx: Context): Expr = {
-        println("\t...apply "+fun+" to "+ctx.str(arg))
-        fun.eval(ctx).exec(ctx, arg.eval(ctx)).eval(ctx)
-    }
-    override def toString(): String = {
-        "" + fun + "(" + arg + ")" 
+    override def exec(ctx: Context, x: Expr): Expr = {
+        println( "\t[lmb] --> exec "+this+" ("+x+"); context="+ctx );
+        var ret = impl.eval(ctx.bind(arg, x.eval(ctx)))
+        println( "\t[lmb] <-- got "+ret+"; context="+ctx );
+        ret
     }
 }
 
 object Smoke {
+    var n = 0
+    def play(expr: Expr) {
+        n = n + 1
+        println( " === CASE "+n )
+        try {
+            println( "    "+expr )
+            println( " EVALS TO" )
+            println( "    "+expr.eval() )
+        } catch {
+            case e: Any => println( " *** DIED: "+e )
+        }
+        println( " === END CASE "+n )
+    }
+
     def main(arg: Array[String]) = {
         var bool = new PartialType("Bool").con("true").con("false")
 
@@ -232,29 +280,44 @@ object Smoke {
         var x = nat.free
         even.con("succ", List(x), not.apply(even.apply(x)))
 
-        var three = nat.spawn("0")
-        three = nat.spawn("succ", List(three))
-        three = nat.spawn("succ", List(three))
-        three = nat.spawn("succ", List(three))
+        var zero = nat.spawn("0")
+        var one = nat.spawn("succ", zero)
+        var two = nat.spawn("succ", one)
+        var three = nat.spawn("succ", two)
 
         var f1 = not.apply(bool.spawn("true"))
 
         play(f1);
         play(even.apply(nat.spawn("0")))
         play(even.apply(three))
+
+        println( " ---- Some lambdas" );
+
+        x = nat.free
+        var self = new Lambda(x, x)
+        play( self.apply(three) )
+
+        x = nat.free
+        var next = new Lambda(x, nat.spawn("succ", List(x)))
+        play( next.apply(three) )
+
+
+        x = nat.free
+        var k = new Lambda(x, new Lambda(nat.free, x))
+
+        play( k.apply(three)(one) )
+
+        println( " ---- Addition " );
+        
+        var add = new PartialFun("add", nat.from(nat).from(nat))
+        add.con("0", self)
+
+
+        var y = nat.free
+        x = nat.free
+        add.con("succ", List(x), new Lambda(y, next.apply(add.apply(x).apply(y))))
+        play (add.apply(one).apply(three))
+
     }
 
-    var n = 0
-    def play(expr: Expr) {
-        n = n + 1
-        println( " === CASE "+n )
-        try {
-            println( "    "+expr )
-            println( " EVALS TO" )
-            println( "    "+expr.eval() )
-        } catch {
-            case e: Any => println( " *** DIED: "+e )
-        }
-        println( " === END CASE "+n )
-    }
 }
