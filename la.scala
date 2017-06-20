@@ -104,20 +104,21 @@ object ContextId {
 class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
     var id = ContextId.next
     println( "\t[ctx] "+this )
+    def vars(): HashMap[FreeVar, Expr] = { vars }
     def bind(free: FreeVar, to: Expr): Context = {
-        if (free.isa != to.isa) {
-            u.die("Cannot bind var of type "+free.isa+" to value "+to)
-        }
-        return new Context( vars + (free->to), id )
+        bind( List(free), List(to) )
     }
     def bind(free: List[FreeVar], to: List[Expr]): Context = {
-        if (free.length != to.length) {
+        var next = this
+        var ifree = free.iterator
+        var ito = to.iterator
+        while (ifree.hasNext && ito.hasNext) {
+            next = new Context(next.vars + (ifree.next->ito.next), id)
+        }
+        if (ifree.hasNext || ito.hasNext) {
             u.die("Cannot bind lists with different length")
         }
-        if (free.length == 0) {
-            return this
-        }
-        bind(free.head, to.head).bind(free.tail, to.tail)
+        return next
     }
     def getValue(free: FreeVar): Expr = {
         if (!vars.contains(free)) {
