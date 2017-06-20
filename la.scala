@@ -285,10 +285,10 @@ object Smoke {
             println( " EVALS TO" )
             var got = expr.eval
             println( "    "+got )
-            if (!got.stop) fail = fail :+ ""+n+": non-final value "+got
+            if (!got.stop) fail = fail :+ ""+n+": "+expr+": non-final value "+got
         } catch {
             case e: Any => println( " *** DIED: "+e )
-            fail = fail :+ ""+n+": died "+e
+            fail = fail :+ ""+n+": "+expr+": died "+e
         }
         println( " === END CASE "+n )
     }
@@ -324,16 +324,16 @@ object Smoke {
         println( " ---- Some lambdas" );
 
         x = nat.free
-        var self = new Lambda(x, x)
+        var self = new Lambda(x, x).rename("I")
         play( self.apply(three) )
 
         x = nat.free
-        var next = new Lambda(x, nat.spawn("succ", List(x)))
+        var next = new Lambda(x, nat.spawn("succ", List(x))).rename("inc")
         play( next.apply(three) )
 
 
         x = nat.free
-        var k_int = new Lambda(x, new Lambda(nat.free, x))
+        var k_int = new Lambda(x, new Lambda(nat.free, x)).rename("K")
 
         play( k_int.apply(three)(one) )
 
