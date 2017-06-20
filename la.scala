@@ -186,9 +186,15 @@ class PartialExpr(isa: PartialType, id: String, arg: List[Expr]=List())
     override def eval(ctx: Context): Expr = {
         new PartialExpr(isa, id, arg.map(x => x.eval(ctx)))
     }
+    def depth(): Int = {
+        if (arg.length == 0) {
+            return 0
+        }
+        return arg.map( x => x match { case x: PartialExpr => x.depth; case _ => 0  } ).sortWith( _>_ ).head + 1
+    }
     override def toString(): String = {
         if (arg.length > 0) {
-            return ""+isa+"."+id+"<"+arg.mkString(",")+">"
+            return ""+isa+"."+id+"["+depth+"]"+"<"+arg.mkString(",")+">"
         } else {
             return ""+isa+"."+id
         }
