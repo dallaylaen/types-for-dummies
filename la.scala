@@ -67,6 +67,7 @@ class FunType(ret: Type, arg: Type) extends Type(ret.name+"("+arg.name+")") {
 
 class Expr(isa: Type) {
     def isa(): Type = { isa }
+    def stop(): Boolean = { false }
     def eval(): Expr = {
         eval(new Context(new HashMap()))
     }
@@ -208,11 +209,15 @@ class PartialType( name: String) extends Type(name) {
 class PartialExpr(isa: PartialType, id: String, arg: List[Expr]=List()) 
         extends Expr(isa){
     u.check(arg, isa.getArgs(id))
+    var to_stop = true
+    arg.foreach( x => if (!x.stop) to_stop = false )
+
     def getArgs(): List[Expr] = { arg }
     def id(): String = { id }
     override def eval(ctx: Context): Expr = {
         new PartialExpr(isa, id, arg.map(x => x.eval(ctx)))
     }
+    override def stop(): Boolean = { to_stop }
     def depth(): Int = {
         if (arg.length == 0) {
             return 0
@@ -220,11 +225,12 @@ class PartialExpr(isa: PartialType, id: String, arg: List[Expr]=List())
         return arg.map( x => x match { case x: PartialExpr => x.depth; case _ => 0  } ).sortWith( _>_ ).head + 1
     }
     override def toString(): String = {
-        if (arg.length > 0) {
-            return ""+isa+"."+id+"["+depth+"]"+"<"+arg.mkString(",")+">"
-        } else {
-            return ""+isa+"."+id
+        var fin = stop() match { case true => "+"; case false => "" }
+        var li  = arg.length match { 
+            case 0 => ""; 
+            case _ => "["+depth+"]"+"<"+arg.mkString(",")+">";
         }
+        return fin+isa+"."+id+li
     }
 }
 
@@ -268,17 +274,19 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
 
 object Smoke {
     var n = 0
-    var fail: List[Int] = List()
+    var fail: List[String] = List()
     def play(expr: Expr) {
         n = n + 1
         println( " === CASE "+n )
         try {
             println( "    "+expr )
             println( " EVALS TO" )
-            println( "    "+expr.eval() )
+            var got = expr.eval
+            println( "    "+got )
+            if (!got.stop) fail = fail :+ ""+n+": non-final value "+got
         } catch {
             case e: Any => println( " *** DIED: "+e )
-            fail = fail :+ n
+            fail = fail :+ ""+n+": died "+e
         }
         println( " === END CASE "+n )
     }
@@ -356,7 +364,7 @@ object Smoke {
 */
 
         if (fail.length > 0) {
-            println( "Failed: "+fail.mkString(", ") )
+            println( "Failed: \n"+fail.mkString("\n") )
             exit(1)
         }
     } /* end main */
