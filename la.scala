@@ -166,8 +166,8 @@ class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
     override def eval(ctx: Context): Expr = {
         println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
         var ret = arg.eval(ctx) match {
-            case xx: FreeVar => new MultiargExpr(List(xx), fun.eval(ctx))
-            case xx: Expr    => fun.eval(ctx).exec(ctx, xx).eval(ctx)
+            case xx: FreeVar => this
+            case xx: Expr    => fun.exec(ctx, xx).eval(ctx)
         }
         println("\t[apl] <-- got "+ret.check(fun.isa.ret)+"; context="+ctx)
         return ret
