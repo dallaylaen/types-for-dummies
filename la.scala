@@ -71,6 +71,8 @@ class FunType(ret: Type, arg: Type) extends Type(ret.name+"("+arg.name+")") {
 class Expr(isa: Type) {
     def isa(): Type = { isa }
     def stop(): Boolean = { false }
+    def wanted(): List[FreeVar] = { List() }
+    def canhelp(ctx: Context): Boolean = { wanted.exists( x=>ctx.vars.contains(x)) }
     def eval(): Expr = {
         eval(new Context(new HashMap()))
     }
@@ -105,6 +107,7 @@ class FreeVar(isa: Type) extends Expr (isa) {
     override def eval(ctx: Context): Expr = {
         return ctx.getValue(this)
     }
+    override def wanted(): List[FreeVar] = { List(this) }
     override def toString(): String = { ""+isa+"["+n+"]" }
     def setTo (t: Expr): Pair[FreeVar,Expr] = {
         if (t.isa != isa)
@@ -163,6 +166,8 @@ class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
 /* Applications and lambdas */
 
 class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
+    var want = fun.wanted ::: arg.wanted
+    override def wanted(): List[FreeVar] = { want }
     override def eval(ctx: Context): Expr = {
         println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
         var ret = arg.eval(ctx) match {
@@ -182,6 +187,8 @@ class Lambda(arg: FreeVar, impl: Expr)
 {
     var name = "lambda"
     def rename(s: String): Lambda = { name = s; this }
+    var want = impl.wanted ::: arg.wanted
+    override def wanted(): List[FreeVar] = { want }
     override def eval(ctx: Context) = { 
         new Lambda( arg, impl.eval(ctx) )
     }
@@ -200,6 +207,8 @@ class Lambda(arg: FreeVar, impl: Expr)
 }
 
 class MultiargExpr(input: List[FreeVar], impl: Expr) extends Expr(impl.isa) {
+    var want = impl.wanted ::: input
+    override def wanted(): List[FreeVar] = { want }
     override def eval(ctx: Context): Expr = {
         println( "\t[uax] --> eval "+this+"; context="+ctx );
         var ret = impl.eval(ctx)
@@ -239,6 +248,8 @@ class PartialExpr(isa: PartialType, id: String, arg: List[Expr]=List())
     u.check(arg, isa.getArgs(id))
     var to_stop = true
     arg.foreach( x => if (!x.stop) to_stop = false )
+    var want = arg.map( x => x.wanted ).flatten
+    override def wanted(): List[FreeVar] = { want }
 
     def getArgs(): List[Expr] = { arg }
     def id(): String = { id }
