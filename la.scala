@@ -445,7 +445,6 @@ object Smoke {
 
         play( same.apply(zero) )
 
-/*
         x = nat.free
         var double = new Lambda( x, add.apply(x).apply(x) )
 
@@ -453,8 +452,7 @@ object Smoke {
 
         play( double.apply(two) );
 
-*/
-/*
+
         var mul = new PartialFun("mul", nat.from(nat).from(nat))
         mul.con("0", new Lambda(nat.free, nat.spawn("0")))
 
@@ -463,7 +461,7 @@ object Smoke {
         mul.con("succ", List(x), new Lambda(y, add.apply(y).apply(mul.apply(x).apply(y))))
 
         play(mul.apply(three).apply(two))
-*/
+
 
         if (fail.length > 0) {
             println( "Failed: \n"+fail.mkString("\n") )
