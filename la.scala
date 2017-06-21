@@ -28,6 +28,15 @@ object u { /* Universe */
             u.check(ex.tail, ty.tail)
         }
     }
+    def equiv( x: List[Expr], y: List[Expr] ): Boolean = {
+        if (x.length != y.length) return false
+        var xx = x.iterator
+        var yy = y.iterator
+        while (xx.hasNext) {
+            if (!xx.next.equiv(yy.next)) return false
+        }
+        return true
+    }
 }
 
 /* Generic types */
@@ -80,26 +89,59 @@ class Expr(isa: Type) {
         u.die ("no eval impl for "+this+" in "+this.getClass);
         this 
     }
+    def eval_if_differs( unchanged: Expr, ctx: Context): Expr = {
+        if (this.equiv(unchanged)) {
+            println("\t[equ] skip eval of "+unchanged+"; context = "+ctx)
+            return unchanged
+        } else {
+            return this.eval(ctx)
+        }
+    }
+    def equiv(other: Expr): Boolean = {
+        return this == other
+    }
     def apply(arg: Expr): Expr = {
         isa match {
-            case isa: FunType => new ApplyExpr(this, arg).check(isa.ret);
+            case isa: FunType => new ApplyExpr(this, arg).check(isa.ret, new Context(new HashMap()));
             case _ => u.die("apply called on non-function value "+this+" of "+isa);
         }
     }
     def exec(ctx: Context, arg: Expr): Expr = {
         isa match {
-            case isa: FunType => new ApplyExpr(this.eval(ctx), arg.eval(ctx)).check(isa.ret)
+            case isa: FunType => new ApplyExpr(this.eval(ctx), arg.eval(ctx)).check(isa.ret, ctx)
             case _          => u.die("exec called on non-function value "+this+" of "+isa)
         }
     }
-    def check(t: Type): Expr = {
+    def check(t: Type, ctx: Context): Expr = {
         if (isa != t) {
             u.die("Type mismatch: expected a " +t+
                 "; got value " + this + " of type "+isa)
         }
+        val leftover = wanted.filter(x => ctx.vars.contains(x))
+        if (leftover.length > 0) {
+            u.die("Variables available in context left uninterpreted: "+leftover.mkString(","))
+        }
         this
     };
     override def toString(): String = { ""+isa+"<...>" }
+}
+
+class CompoundExpr(isa: Type, deps: List[Expr]) extends Expr(isa) {
+    override val wanted = deps.map( x => x.wanted ).flatten
+
+    def deps(): List[Expr] = { deps }
+    def head(): Expr = { deps.head }
+    def snd():  Expr = { deps.tail.head }
+    def tail(): List[Expr] = { deps.tail }
+    def propagate(ctx: Context): List[Expr] = { deps.map( x => x.eval(ctx) ) }
+
+    override def equiv(other: Expr): Boolean = other match {
+        case xx: CompoundExpr => getClass == xx.getClass && isa == xx.isa &&
+            u.equiv(deps, xx.deps);
+        case _ => false;
+    }
+
+    override def toString(): String = { isa+"<"+deps.mkString(",")+">" }
 }
 
 class FreeVar(isa: Type) extends Expr (isa) {
@@ -165,16 +207,14 @@ class Context(vars: HashMap[FreeVar, Expr], parent: Int = 0) {
 
 /* Applications and lambdas */
 
-class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
-    var want = fun.wanted ::: arg.wanted
-    override def wanted(): List[FreeVar] = { want }
+class ApplyExpr(fun: Expr, arg: Expr) extends CompoundExpr(fun.isa.ret, List(fun, arg)) {
     override def eval(ctx: Context): Expr = {
         println("\t[apl] --> apply "+fun+" to "+ctx.str(arg)+"; context="+ctx)
         var ret = arg.eval(ctx) match {
-            case xx: FreeVar => this
-            case xx: Expr    => fun.exec(ctx, xx).eval(ctx)
+            case xx: FreeVar => new ApplyExpr(fun.eval(ctx), arg)
+            case xx: Expr    => fun.exec(ctx, xx).eval_if_differs(this, ctx)
         }
-        println("\t[apl] <-- got "+ret.check(fun.isa.ret)+"; context="+ctx)
+        println("\t[apl] <-- got "+ret.check(fun.isa.ret, ctx)+"; context="+ctx)
         return ret
     }
     override def toString(): String = {
@@ -183,12 +223,10 @@ class ApplyExpr(fun: Expr, arg: Expr) extends Expr(fun.isa.ret) {
 }
 
 class Lambda(arg: FreeVar, impl: Expr) 
-        extends Expr(impl.isa.from(arg.isa))
+        extends CompoundExpr(impl.isa.from(arg.isa), List(impl, arg))
 {
     var name = "lambda"
     def rename(s: String): Lambda = { name = s; this }
-    var want = impl.wanted ::: arg.wanted
-    override def wanted(): List[FreeVar] = { want }
     override def eval(ctx: Context) = { 
         new Lambda( arg, impl.eval(ctx) )
     }
@@ -201,14 +239,12 @@ class Lambda(arg: FreeVar, impl: Expr)
             case xx: FreeVar => new MultiargExpr (List(xx), impl)
             case xx: Expr    => impl.eval(ctx.bind(arg, xx))
         }
-        println( "\t[lmb] <-- got "+ret.check(impl.isa) );
+        println( "\t[lmb] <-- got "+ret.check(impl.isa, ctx) );
         ret
     }
 }
 
-class MultiargExpr(input: List[FreeVar], impl: Expr) extends Expr(impl.isa) {
-    var want = impl.wanted ::: input
-    override def wanted(): List[FreeVar] = { want }
+class MultiargExpr(input: List[FreeVar], impl: Expr) extends CompoundExpr(impl.isa, impl :: input) {
     override def eval(ctx: Context): Expr = {
         println( "\t[uax] --> eval "+this+"; context="+ctx );
         var ret = impl.eval(ctx)
@@ -244,17 +280,19 @@ class PartialType( name: String) extends Type(name) {
 }
 
 class PartialExpr(isa: PartialType, id: String, arg: List[Expr]=List()) 
-        extends Expr(isa){
+        extends CompoundExpr(isa, arg){
     u.check(arg, isa.getArgs(id))
     var to_stop = true
     arg.foreach( x => if (!x.stop) to_stop = false )
-    var want = arg.map( x => x.wanted ).flatten
-    override def wanted(): List[FreeVar] = { want }
 
     def getArgs(): List[Expr] = { arg }
     def id(): String = { id }
     override def eval(ctx: Context): Expr = {
         new PartialExpr(isa, id, arg.map(x => x.eval(ctx)))
+    }
+    override def equiv(other: Expr): Boolean = other match {
+        case xx: PartialExpr => xx.id == id && super.equiv(xx)
+        case _ => false
     }
     override def stop(): Boolean = { to_stop }
     def depth(): Int = {
@@ -298,7 +336,7 @@ class PartialFun(name: String, isa: FunType) extends Expr(isa) {
             }
             case any => u.die("Cannot exec "+this+" on value "+any)
         }
-        println("\t[par] <-- got "+ret.check(isa.ret)+"; context="+ctx )
+        println("\t[par] <-- got "+ret.check(isa.ret, ctx)+"; context="+ctx )
         ret
     }
     def getImpl(id: String): MultiargExpr = {
