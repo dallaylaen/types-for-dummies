@@ -449,9 +449,9 @@ object Smoke {
         var double = new Lambda( x, add.apply(x).apply(x) )
 
         play( double.apply(zero) );
-
         play( double.apply(two) );
 
+        println( " --- now multiply " )
 
         var mul = new PartialFun("mul", nat.from(nat).from(nat))
         mul.con("0", new Lambda(nat.free, nat.spawn("0")))
@@ -462,6 +462,15 @@ object Smoke {
 
         play(mul.apply(three).apply(two))
 
+        var factorial = new PartialFun("fact", nat.from(nat)).con("0", one)
+        x =nat.free
+        factorial.con("succ", List(x), mul.apply(next.apply(x)).apply(factorial.apply(x)))
+
+        println( " --- making a 4" )
+        var four = add.apply(two).apply(two).eval
+        println( " --- factorial!" )
+
+        play(factorial.apply(four))
 
         if (fail.length > 0) {
             println( "Failed: \n"+fail.mkString("\n") )
