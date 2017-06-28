@@ -1,0 +1,31 @@
+type Bool
+cons Bool.true
+cons Bool.false
+
+var not : Bool(Bool) = match
+case not.true  = Bool.false
+case not.false = Bool.true
+
+var nand : Bool(Bool)(Bool) = match
+case nand.false = not
+case nand.true  = lambda (_:Bool) { Bool.false }
+
+print nand(Bool.false)(Bool.false)
+
+type Nat
+cons Nat.zero
+cons Nat.succ Nat
+
+var next : Nat(Nat) = lambda (n:Nat) { Nat.succ(n) }
+
+var plus : Nat(Nat)(Nat) = match
+case plus.zero        = lambda (n: Nat) { n }
+case plus.succ(n:Nat) = lambda (m: Nat) { plus(n)(next(m)) }
+
+var n0 : Nat = Nat.zero
+var n1 : Nat = next(n0)
+var n2 : Nat = next(n1)
+
+print plus(n2)(n2)
+
+ 
