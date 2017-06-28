@@ -1,5 +1,6 @@
 package stlc;
 import scala.collection.immutable.HashMap;
+import scala.util.matching.Regex;
 
 class Expr {
     def eval(): Expr = { this }
@@ -65,6 +66,59 @@ class Product(content: HashMap[String,Expr] = HashMap())  extends Expr{
     }
 }
 
+class Parser {
+    val re_q = """^\"(.*)\"$""".r
+    val re_id = """([a-z][a-z0-9]*)""".r
+
+    var names: HashMap[String,Expr] = new HashMap()
+
+    /* f(x)(y)(z)*/
+    def expr(li: Iterator[String], depth: Int=0):Expr = {
+        if (!li.hasNext) {
+            die ("Expression ended abruptly")
+        }
+        var first = li.next
+        var current: Expr = first match {
+            case re_q(content) => new Const(content);
+            case re_id(name) => fun(name);
+            case any => die( "Unexpected start of expr: "+any );
+        }
+
+        var stop: Boolean = false
+        while (li.hasNext && !stop) {
+            li.next match {
+                case "(" => { current = current.apply(expr(li, depth+1)) };
+                case ")" => if (depth > 0) {
+                    stop = true
+                } else {
+                    die ("Unexpected closing paren");
+                };
+                case any => {
+                    die ("Unexpected term: '"+any+"'");
+                }
+            }
+        }
+
+        current
+    } /* end Parser.expr */
+
+    def beta(name: String, expr: Expr): Unit = {
+        names = names + (name->expr)
+    }
+
+    def die[T](e: String): T = {
+        throw new Exception( "PARSE: "+e )
+    }
+
+    def fun(s:String): Expr = {
+        if (names.contains(s)) {
+            names{s}
+        } else {
+            die( "Unknown value/function: "+s );
+        }
+    }
+}
+
 object Smoke {
     def main(args: Array[String]): Unit = {
         var expr: Expr = add("const", new Const("42"))
@@ -86,6 +140,17 @@ object Smoke {
         play(handle.apply(c("except","137") ));
 
         play(S.apply(K).apply(S).apply(c("fff")))
+
+        println(" === PARSER SMOKE === ");
+
+        var par = new Parser()
+
+        par.beta("s", S);
+        par.beta("k", K);
+        par.beta("i", I);
+
+        play( par.expr("s ( k ) ( i ) ( \"xxx\" )".split(" ").iterator) );
+
     }
 
     var n: Int = 1
