@@ -80,11 +80,14 @@ class ParserCycle {
         var mid: Todo = start match {
             case x: TodoFwd     => x.grabPrefix(src)
         }
-        mid match {
-            case x: TodoAscend  => x.context
-            case x: TodoDescend => x.merge( descend( src, x ) ).context
-            case x: TodoFwd     => descend( src, x )
+        while (true) {
+            mid match {
+                case x: TodoDescend => mid = x.merge( descend( src, x ) )
+                case x: TodoAscend  => return x.context
+                case x: TodoFwd     => return descend( src, x )
+            }
         }
+        throw new ParseError("Control never gets here, file a bug");
     }
     def parseLine( rules: Rules, ctx: Ctx, src: ParseTape ): Ctx = {
         descend(src, new TodoFwd(rules, ctx))
@@ -93,35 +96,37 @@ class ParserCycle {
 
 // ------------------------------------
 
-
+class MyCtx( s: String ) extends Ctx {
+    override def toString(): String = s
+}
 
 // ------------------------------------
 
 
 object Smoke {
     def main (arg: Array[String]): Unit = {
-        var tape = new ParseTape("foobared bazooka")
+        var tape = new ParseTape("(()(()()))")
 
-        println ("at "+tape.offset+": "+tape.content)
+        println (tape.content + " at " + tape.where)
 
-        var ctx = new Ctx
-
-        var chain = new Rules()
-        chain.addRule( """\s*baz\w+""".r, (x, y) => { 
-                println( "found "+x+" at "+ tape.where )
-                new Todo(new Ctx)
+        var expr    = new Rules()
+        expr.addRule( "\\(".r, (term, ctx) => {
+            println( "descend: "+term+" at "+tape.where )
+            new TodoDescend(expr, new MyCtx(""), c => new TodoFwd(
+                expr, new MyCtx(ctx+"["+c+"]" ) ) )
         } );
-        chain.addRule( """\s*foo\w+""".r, (x, y) => { 
-                println( "found "+x+" at "+ tape.where )
-                new Todo(new Ctx)
+        expr.addRule( "\\)".r, (term, ctx) => {
+            println( "ascend:  "+term+" at "+tape.where )
+            new TodoAscend( ctx )
+        } );
+        expr.addRule( "$".r, (term, ctx) => {
+            println( "eol at "+tape.where );
+            new TodoAscend( ctx )
         } );
 
-        println("pass1");
-        chain.grabPrefix(tape, ctx);
-        println("pass2");
-        chain.grabPrefix(tape, ctx);
-        println("pass3");
-        chain.grabPrefix(tape, ctx);
+        var cycle = new ParserCycle()
+        println( cycle.parseLine( expr, new MyCtx("parens"), tape ) )
+
 
 
     }
