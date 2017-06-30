@@ -3,7 +3,7 @@ package stlc.parse;
 import scala.util.matching.Regex;
 import scala.util.matching.Regex.Match;
 
-class ParseError(s: String) extends Exception("PASRE: "+s) {
+class ParseError(s: String) extends Exception("PARSE: "+s) {
 }
 
 class ParseTape (init: String, iline: Int = 0, ioffset: Int = 1) {
@@ -30,16 +30,19 @@ class ParseTape (init: String, iline: Int = 0, ioffset: Int = 1) {
     def where(): String = { "line "+line+" offset "+prev }
 }
 
+class Ctx {
+}
 
-class Rules[Ctx] {
-    type Handler = (Match,Ctx)=>Todo[Ctx]
+
+class Rules {
+    type Handler = (Match,Ctx)=>Todo
     var rules : List[Pair[Regex,Handler]] = List()
-    def addRule( r: Regex, todo: Handler ): Rules[Ctx] = {
+    def addRule( r: Regex, todo: Handler ): Rules = {
         rules = rules :+ Pair(r, todo)
         this
     }
 
-    def grabPrefix( src: ParseTape, ctx: Ctx ): Todo[Ctx] = {
+    def grabPrefix( src: ParseTape, ctx: Ctx ): Todo = {
         for (pair <- rules) {
             src.grabPrefix(pair._1) match {
                 case None => {}
@@ -50,33 +53,40 @@ class Rules[Ctx] {
     }
 }
 
-class Todo[Ctx] {
+class Todo(ctx: Ctx) {
+    def context(): Ctx = { ctx }
 }
 
-class TodoFwd[Ctx](rules: Rules[Ctx], ctx: Ctx) extends Todo[Ctx] {
-    def grabPrefix(src: ParseTape): Todo[Ctx] = {
+class TodoFwd(rules: Rules, ctx: Ctx) extends Todo(ctx) {
+    def grabPrefix(src: ParseTape): Todo = {
         rules.grabPrefix(src, ctx)
     }
 }
 
-class TodoDescend[Ctx](rules: Rules[Ctx], ctx: Ctx, imerge: Ctx=>Todo[Ctx])
-        extends TodoFwd[Ctx](rules, ctx) {
-    def merge(ctx: Ctx): Todo[Ctx] = { imerge(ctx) }
+class TodoDescend(rules: Rules, ctx: Ctx, imerge: Ctx=>Todo)
+        extends TodoFwd(rules, ctx) {
+    def merge(ctx: Ctx): Todo = { imerge(ctx) }
 }
 
-class TodoAscend[Ctx](ctx: Ctx) {
-    def context(): Ctx = { ctx }
+class TodoAscend(ctx: Ctx) extends Todo(ctx) {
 }
 
 
 
 
 
-class ParserCycle[Ctx] {
-    def descend(src: ParseTape, start: Todo[Ctx]): Ctx = {
-        throw new Exception ("not done");
+class ParserCycle {
+    def descend(src: ParseTape, start: Todo): Ctx = {
+        var mid: Todo = start match {
+            case x: TodoFwd     => x.grabPrefix(src)
+        }
+        mid match {
+            case x: TodoAscend  => x.context
+            case x: TodoDescend => x.merge( descend( src, x ) ).context
+            case x: TodoFwd     => descend( src, x )
+        }
     }
-    def parseLine( rules: Rules[Ctx], ctx: Ctx, src: ParseTape ): Ctx = {
+    def parseLine( rules: Rules, ctx: Ctx, src: ParseTape ): Ctx = {
         descend(src, new TodoFwd(rules, ctx))
     }
 }
@@ -94,16 +104,16 @@ object Smoke {
 
         println ("at "+tape.offset+": "+tape.content)
 
-        var ctx = ""
+        var ctx = new Ctx
 
-        var chain = new Rules[String]()
+        var chain = new Rules()
         chain.addRule( """\s*baz\w+""".r, (x, y) => { 
                 println( "found "+x+" at "+ tape.where )
-                new Todo[String]()
+                new Todo(new Ctx)
         } );
         chain.addRule( """\s*foo\w+""".r, (x, y) => { 
                 println( "found "+x+" at "+ tape.where )
-                new Todo[String]()
+                new Todo(new Ctx)
         } );
 
         println("pass1");
