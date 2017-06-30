@@ -1,5 +1,6 @@
 package stlc.parse;
 
+import scala.collection.immutable.HashMap;
 import scala.util.matching.Regex;
 import scala.util.matching.Regex.Match;
 
@@ -35,32 +36,53 @@ class Ctx {
 }
 
 
-class Rules {
+class Rules (name: String) {
     type Handler = (Match,Ctx)=>Todo
     var rules : List[Pair[Regex,Handler]] = List()
     var isFinal = false
+    var locked = false
+
+    def lock(): Rules = {
+        if (locked)
+            throw new Exception("Attempt to modify locked state")
+        if (rules.length == 0)
+            throw new Exception("Attempt to lock an empty state "+name)
+        locked = true
+        return this
+    }
 
     def makeFinal(): Rules = {
+        if (locked)
+            throw new Exception("Attempt to modify locked state")
         isFinal = true
         this
     }
 
     def addRule( r: Regex, todo: Handler ): Rules = {
+        if (locked)
+            throw new Exception("Attempt to modify locked state")
         rules = rules :+ Pair(r, todo)
         this
     }
 
+    def padding(rex: Regex): Rules = {
+        new Rules("padding of "+name).addRule( rex,
+            (_, ctx) => new TodoFwd(this, ctx) ).lock
+    }
+
     def grabPrefix( src: ParseTape, ctx: Ctx ): Todo = {
+        if (!locked)
+            throw new Exception("Attempt to parse using unlocked rule")
         for (pair <- rules) {
             src.grabPrefix(pair._1) match {
                 case None => {}
                 case Some(hit: Match) => {
-                    println("\t[match] "+hit+" matches "+pair._1+" at "+src.where)
+                    println("\t[match] "+hit+" matches "+pair._1+" in "+name+" at "+src.where)
                     return pair._2(hit, ctx)
                 }
             }
         }
-        throw new ParseError("No rule found for '"+src+"'"+" at "+src.where);
+        throw new ParseError("No matching rule found in "+name+" at "+src.where);
     }
 }
 
@@ -98,21 +120,77 @@ class TodoAscend(ctx: Ctx) extends Todo(ctx) {
 
 
 class ParserCycle {
-    def descend(src: ParseTape, start: Todo): Ctx = {
-        var mid: Todo = start match {
-            case x: TodoFwd     => x.grabPrefix(src)
-        }
-        while (true) {
-            mid match {
-                case x: TodoDescend => mid = x.merge( descend( src, x ) )
-                case x: TodoAscend  => return x.context
-                case x: TodoFwd     => return descend( src, x )
-            }
-        }
-        throw new ParseError("Control never gets here, file a bug");
+    type Handler = (Match,Ctx)=>Todo
+
+    var states: HashMap[String,Rules] = new HashMap()
+    var start: String = ""
+    var locked = false
+
+    def lock(): ParserCycle = {
+        if (start == "")
+            throw new Exception("Attempt to lock parser without starting state")
+        states.values.toList.foreach( x => x.lock )
+        locked = true
+        this
     }
-    def parseLine( rules: Rules, ctx: Ctx, src: ParseTape ): Ctx = {
-        var todo:Todo = new TodoFwd(rules, ctx)
+
+    def state(s: String): Rules = { states{s} }
+    def addState(s: String): Rules = {
+        if (locked)
+            throw new Exception("Attempt to modified locked parser")
+        if (states.contains(s))
+            throw new Exception("Duplicate definition of state "+s)
+        var r = new Rules(s)
+        states = states + (s -> r)
+        r
+    }
+    def startState(s: String): Rules = {
+        if (locked)
+            throw new Exception("Attempt to modified locked parser")
+        if (start != "")
+            throw new Exception("Attempt to replace starting state "+start+" with "+s)
+        start = s
+        addState(s)
+    }
+
+    def checkSwitch(from: String, to: String): Unit = {
+        if (locked)
+            throw new Exception("Attempt to modified locked parser")
+        if (!states.contains(from))
+            throw new Exception("Attempt to add transition from nonexistent state "+from);
+        if (to != "" && !states.contains(to))
+            throw new Exception("Attempt to add transition to nonexistent state "+to);
+    }
+
+    def switchAscend(from: String, rex: Regex, body:(Match,Ctx)=>Ctx): ParserCycle = {
+        checkSwitch(from, "")
+        var fromState = states{from}
+        fromState.addRule(rex, (term, ctx) => new TodoAscend(body(term,ctx)))
+
+        this
+    }
+    def switchFwd(from: String, rex: Regex, to: String, body:(Match,Ctx)=>Ctx): ParserCycle = {
+        checkSwitch(from, to)
+        var fromState = states{from}
+        var toState   = states{to}
+        fromState.addRule(rex, (term, ctx) => new TodoFwd(toState, body(term,ctx)))
+
+        this
+    }
+    def switchDescend(from: String, rex: Regex, to: String, body:(Match,Ctx)=>Ctx, merge: (Ctx,Ctx)=>Todo): ParserCycle = {
+        checkSwitch(from, to)
+        var fromState = states{from}
+        var toState   = states{to}
+        fromState.addRule(rex, (term, ctx) => new TodoDescend(toState, body(term,ctx), inner => merge(ctx, inner)))
+
+        this
+    }
+
+    def parseLine( ctx: Ctx, src: ParseTape ): Ctx = {
+        if (!locked)
+            throw new Exception("Trying to use a non-locked machine");
+
+        var todo:Todo = new TodoFwd(states{start}, ctx)
         var stack: List[Ctx=>Todo] = List()
 
         try {
@@ -163,22 +241,18 @@ object Smoke {
 
         println (tape.content + " at " + tape.where)
 
-        var expr    = new Rules()
-        expr.addRule( "\\(".r, (term, ctx) => {
-            println( "descend: "+term+" at "+tape.where )
-            new TodoDescend(expr, new MyCtx(""), c => new TodoFwd(
-                expr, new MyCtx(ctx+"["+c+"]" ) ) )
-        } );
-        expr.addRule( "\\)".r, (term, ctx) => {
-            println( "ascend:  "+term+" at "+tape.where )
-            new TodoAscend( ctx )
-        } );
-        expr.makeFinal
-
         var cycle = new ParserCycle()
+        cycle.startState("expr")
+        var st_arg = cycle.addState("arg").makeFinal
+
+        cycle.switchFwd("expr", "\\w+".r, "arg", (term, ctx) => new MyCtx(""+term))
+        cycle.switchDescend("arg", "\\(".r, "expr", (_, ctx) => new MyCtx("."), (outer, inner) => new TodoFwd(st_arg, new MyCtx(outer+"["+inner+"]")))
+        cycle.switchAscend("arg", "\\)".r, (_, ctx) => ctx)
+        cycle.switchAscend("expr", "\\)".r, (_, ctx) => new MyCtx("nil"))
+        cycle.lock
 
         try {
-            println( "Got it: "+cycle.parseLine( expr, new MyCtx("parens"), tape ) )
+            println( "Got it: "+cycle.parseLine( new MyCtx(""), tape ) )
         } catch {
             case e: ParseError => println(e)
         }
