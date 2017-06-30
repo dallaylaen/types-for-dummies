@@ -4,6 +4,7 @@ import scala.util.matching.Regex;
 import scala.util.matching.Regex.Match;
 
 class ParseError(s: String) extends Exception("PARSE: "+s) {
+    def reason(): String = {s}
 }
 
 class ParseTape (init: String, iline: Int = 0, ioffset: Int = 1) {
@@ -37,6 +38,13 @@ class Ctx {
 class Rules {
     type Handler = (Match,Ctx)=>Todo
     var rules : List[Pair[Regex,Handler]] = List()
+    var isFinal = false
+
+    def makeFinal(): Rules = {
+        isFinal = true
+        this
+    }
+
     def addRule( r: Regex, todo: Handler ): Rules = {
         rules = rules :+ Pair(r, todo)
         this
@@ -46,7 +54,10 @@ class Rules {
         for (pair <- rules) {
             src.grabPrefix(pair._1) match {
                 case None => {}
-                case Some(hit: Match) => return pair._2(hit, ctx)
+                case Some(hit: Match) => {
+                    println("\t[match] "+hit+" matches "+pair._1+" at "+src.where)
+                    return pair._2(hit, ctx)
+                }
             }
         }
         throw new ParseError("No rule found for '"+src+"'"+" at "+src.where);
@@ -55,20 +66,31 @@ class Rules {
 
 class Todo(ctx: Ctx) {
     def context(): Ctx = { ctx }
+    def stopHere(): Ctx = { ctx }
 }
 
 class TodoFwd(rules: Rules, ctx: Ctx) extends Todo(ctx) {
     def grabPrefix(src: ParseTape): Todo = {
         rules.grabPrefix(src, ctx)
     }
+    override def stopHere(): Ctx = {
+        if (rules.isFinal)
+            return ctx
+        throw new ParseError("Parse stopped in non-final state")
+    }
 }
 
 class TodoDescend(rules: Rules, ctx: Ctx, imerge: Ctx=>Todo)
         extends TodoFwd(rules, ctx) {
     def merge(ctx: Ctx): Todo = { imerge(ctx) }
+    def getMerge(): Ctx=>Todo = { imerge }
+    override def stopHere(): Ctx = {
+        throw new ParseError("Cannot stop at descend")
+    }
 }
 
 class TodoAscend(ctx: Ctx) extends Todo(ctx) {
+    override def stopHere(): Ctx = { throw new ParseError("Unfinished parse") }
 }
 
 
@@ -90,8 +112,41 @@ class ParserCycle {
         throw new ParseError("Control never gets here, file a bug");
     }
     def parseLine( rules: Rules, ctx: Ctx, src: ParseTape ): Ctx = {
-        descend(src, new TodoFwd(rules, ctx))
-    }
+        var todo:Todo = new TodoFwd(rules, ctx)
+        var stack: List[Ctx=>Todo] = List()
+
+        try {
+            while (true) {
+                todo match {
+                    case x: TodoDescend => {
+                        println("\t[stack] push at "+src.where)
+                        stack = x.getMerge :: stack
+                    }
+                    case _ =>
+                }
+                todo match {
+                    case x: TodoAscend  => {
+                        if (stack.length == 0)
+                            throw new ParseError("Ascend unexpected")
+                        println("\t[stack] pop at "+src.where)
+                        todo  = stack.head(x.context);
+                        stack = stack.tail
+                    }
+                    case x: TodoFwd     => {
+                        todo  = x.grabPrefix(src)
+                    }
+                    case _ => throw new ParseError("Don't know how to handle "+todo)
+                }
+                if (!src.nonempty && stack.length == 0) {
+                    return todo.stopHere
+                }
+            } //
+        } catch {
+            case e: ParseError => throw new ParseError(e.reason+" at "+src.where)
+            case other => throw other
+        }
+        throw new ParseError("Cannot reach here")
+    } // end of parseLine
 }
 
 // ------------------------------------
@@ -105,7 +160,7 @@ class MyCtx( s: String ) extends Ctx {
 
 object Smoke {
     def main (arg: Array[String]): Unit = {
-        var tape = new ParseTape("(()(()()))")
+        var tape = new ParseTape(arg(0))
 
         println (tape.content + " at " + tape.where)
 
@@ -119,14 +174,16 @@ object Smoke {
             println( "ascend:  "+term+" at "+tape.where )
             new TodoAscend( ctx )
         } );
-        expr.addRule( "$".r, (term, ctx) => {
-            println( "eol at "+tape.where );
-            new TodoAscend( ctx )
-        } );
+        expr.makeFinal
 
         var cycle = new ParserCycle()
-        println( cycle.parseLine( expr, new MyCtx("parens"), tape ) )
 
+        try {
+            println( "Got it: "+cycle.parseLine( expr, new MyCtx("parens"), tape ) )
+        } catch {
+            case e: ParseError => println(e)
+            case other => throw other
+        }
 
 
     }
