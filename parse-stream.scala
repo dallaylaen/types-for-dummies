@@ -143,7 +143,6 @@ class ParserCycle {
             } //
         } catch {
             case e: ParseError => throw new ParseError(e.reason+" at "+src.where)
-            case other => throw other
         }
         throw new ParseError("Cannot reach here")
     } // end of parseLine
@@ -182,7 +181,6 @@ object Smoke {
             println( "Got it: "+cycle.parseLine( expr, new MyCtx("parens"), tape ) )
         } catch {
             case e: ParseError => println(e)
-            case other => throw other
         }
 
 
