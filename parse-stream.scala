@@ -8,11 +8,12 @@ class ParseError(s: String) extends Exception("PARSE: "+s) {
     def reason(): String = {s}
 }
 
-class ParseTape (init: String, iline: Int = 0, ioffset: Int = 1) {
+class ParseTape (init: String, iline: Int = 1, ioffset: Int = 1) {
     var content = init
     var line    = iline
-    var offset  = ioffset
-    var prev    = ioffset
+    var char    = ioffset
+    var lineNow = iline
+    var charNow = ioffset
 
     def grabPrefix( rex: Regex ): Option[Match] = {
         rex.findPrefixMatchOf(content) match {
@@ -20,16 +21,23 @@ class ParseTape (init: String, iline: Int = 0, ioffset: Int = 1) {
             case Some(hit: Match) => {
                 content = content.substring(hit.matched.length, content.length)
                 /* ouch! */
-                prev    = offset
-                offset  = offset + hit.matched.length
+                char    = charNow
+                line    = lineNow
+                var newlines = "\n[^\n]*".r.findAllIn(hit.matched).toList
+                if (newlines.length > 0) {
+                    lineNow = lineNow + newlines.length
+                    charNow = newlines.last.length
+                } else {
+                    charNow = charNow + hit.matched.length
+                }
                 return Option(hit)
             }
         }
     }
     def nonempty(): Boolean = { content.length > 0 }
 
-    def whereNow(): String = { "line "+line+" offset "+offset }
-    def where(): String = { "line "+line+" offset "+prev }
+    def where(): String = { "line "+line+" offset "+char }
+    def whereNow(): String = { "line "+lineNow+" offset "+charNow }
 }
 
 class Rules[Ctx] (name: String) {
