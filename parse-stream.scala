@@ -37,6 +37,7 @@ class Rules[Ctx] (name: String) {
     var rules : List[Pair[Regex,Handler]] = List()
     var isFinal = false
     var locked = false
+    var xpadding = "".r
 
     def lock(): Rules[Ctx] = {
         if (locked)
@@ -62,13 +63,19 @@ class Rules[Ctx] (name: String) {
     }
 
     def padding(rex: Regex): Rules[Ctx] = {
-        new Rules[Ctx]("padding of "+name).addRule( rex,
-            (_, ctx) => new TodoFwd[Ctx](this, ctx) ).lock
+        if (locked)
+            throw new Exception("Attempt to modify locked state")
+        xpadding = rex
+        this
     }
 
     def grabPrefix( src: ParseTape, ctx: Ctx ): Todo[Ctx] = {
         if (!locked)
             throw new Exception("Attempt to parse using unlocked rule")
+        src.grabPrefix(xpadding) match {
+            case Some(whitespace: Match) =>
+            case None => throw new ParseError("Padding failed to match for state "+name+": "+xpadding)
+        }
         for (pair <- rules) {
             src.grabPrefix(pair._1) match {
                 case None => {}
@@ -78,7 +85,7 @@ class Rules[Ctx] (name: String) {
                 }
             }
         }
-        throw new ParseError("No matching rule found in "+name+" at "+src.where);
+        throw new ParseError("No matching rule found in "+name);
     }
 }
 
@@ -116,11 +123,10 @@ class TodoAscend[Ctx](ctx: Ctx) extends Todo[Ctx](ctx) {
 
 
 class ParserCycle[Ctx] {
-    type Handler = (Match,Ctx)=>Todo[Ctx]
-
+    var locked = false
     var states: HashMap[String,Rules[Ctx]] = new HashMap()
     var start: String = ""
-    var locked = false
+    var xpadding: Option[Regex] = None
 
     def lock(): ParserCycle[Ctx] = {
         if (start == "")
@@ -137,6 +143,10 @@ class ParserCycle[Ctx] {
         if (states.contains(s))
             throw new Exception("Duplicate definition of state "+s)
         var r = new Rules[Ctx](s)
+        xpadding match {
+            case Some(rex: Regex) => r.padding(rex)
+            case _ =>
+        }
         states = states + (s -> r)
         r
     }
@@ -147,6 +157,14 @@ class ParserCycle[Ctx] {
             throw new Exception("Attempt to replace starting state "+start+" with "+s)
         start = s
         addState(s)
+    }
+    def padding(): ParserCycle[Ctx] = {
+        xpadding = None
+        this
+    }
+    def padding(rex: Regex): ParserCycle[Ctx] = {
+        xpadding = Option(rex)
+        this
     }
 
     def checkSwitch(from: String, to: String): Unit = {
@@ -239,7 +257,7 @@ object Smoke {
 
         println (tape.content + " at " + tape.where)
 
-        var cycle = new ParserCycle[MyCtx]()
+        var cycle = new ParserCycle[MyCtx]().padding("\\s*".r)
         cycle.startState("expr")
         var st_arg = cycle.addState("arg").makeFinal
 
