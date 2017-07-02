@@ -184,14 +184,14 @@ class ParserCycle[Ctx] {
             throw new Exception("Attempt to add transition to nonexistent state "+to);
     }
 
-    def switchAscend(from: String, rex: Regex, body:(Match,Ctx)=>Ctx): ParserCycle[Ctx] = {
+    def switchUp(from: String, rex: Regex, body:(Match,Ctx)=>Ctx): ParserCycle[Ctx] = {
         checkSwitch(from, "")
         var fromState = states{from}
         fromState.addRule(rex, (term, ctx) => new TodoAscend[Ctx](body(term,ctx)))
 
         this
     }
-    def switchFwd(from: String, rex: Regex, to: String, body:(Match,Ctx)=>Ctx): ParserCycle[Ctx] = {
+    def switch(from: String, rex: Regex, to: String, body:(Match,Ctx)=>Ctx): ParserCycle[Ctx] = {
         checkSwitch(from, to)
         var fromState = states{from}
         var toState   = states{to}
@@ -199,7 +199,7 @@ class ParserCycle[Ctx] {
 
         this
     }
-    def switchDescend(from: String, rex: Regex, to: String, body:(Match,Ctx)=>Ctx, merge: (Ctx,Ctx)=>Todo[Ctx]): ParserCycle[Ctx] = {
+    def switchDown(from: String, rex: Regex, to: String, body:(Match,Ctx)=>Ctx, merge: (Ctx,Ctx)=>Todo[Ctx]): ParserCycle[Ctx] = {
         checkSwitch(from, to)
         var fromState = states{from}
         var toState   = states{to}
@@ -269,10 +269,10 @@ object Smoke {
         cycle.startState("expr")
         var st_arg = cycle.addState("arg").makeFinal
 
-        cycle.switchFwd("expr", "\\w+".r, "arg", (term, ctx) => new MyCtx(""+term))
-        cycle.switchDescend("arg", "\\(".r, "expr", (_, ctx) => new MyCtx("."), (outer, inner) => new TodoFwd[MyCtx](st_arg, new MyCtx(outer+"["+inner+"]")))
-        cycle.switchAscend("arg", "\\)".r, (_, ctx) => ctx)
-        cycle.switchAscend("expr", "\\)".r, (_, ctx) => new MyCtx("nil"))
+        cycle.switch("expr", "\\w+".r, "arg", (term, ctx) => new MyCtx(""+term))
+        cycle.switchDown("arg", "\\(".r, "expr", (_, ctx) => new MyCtx("."), (outer, inner) => new TodoFwd[MyCtx](st_arg, new MyCtx(outer+"["+inner+"]")))
+        cycle.switchUp("arg", "\\)".r, (_, ctx) => ctx)
+        cycle.switchUp("expr", "\\)".r, (_, ctx) => new MyCtx("nil"))
         cycle.lock
 
         try {
